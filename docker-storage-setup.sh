@@ -301,6 +301,21 @@ disable_auto_pool_extension() {
   rm -f ${profileDir}/${profileFile}
 }
 
+docker_storage_is_configured() {
+  local options
+  if [ ! -f "$DOCKER_STORAGE" ];then
+    return 1
+  fi
+
+  # if there is a value in DOCKER_STORAGE_OPTIONS=, assume storage is already
+  # configured.
+  if options=$(grep -e "^DOCKER_STORAGE_OPTIONS=" $DOCKER_STORAGE | cut -d "=" -f2 | sed 's/^ *//');then
+	  [ -n "$options" ] && return 0
+  fi
+
+  return 1
+}
+
 # Main Script
 if [ -e /usr/lib/docker-storage-setup/docker-storage-setup ]; then
   source /usr/lib/docker-storage-setup/docker-storage-setup
@@ -310,11 +325,6 @@ fi
 # take that into account.
 if [ -e /etc/sysconfig/docker-storage-setup ]; then
   source /etc/sysconfig/docker-storage-setup
-fi
-
-if is_old_data_meta_mode; then
-  echo "ERROR: Old mode of passing data and metadata logical volumes to docker is not supported. Exiting."
-  exit 1
 fi
 
 # Read mounts
@@ -346,6 +356,11 @@ grow_root_pvs
 if [ -n "$ROOT_SIZE" ]; then
   # TODO: Error checking if specified size is <= current size
   lvextend -r -L $ROOT_SIZE $ROOT_DEV || true
+fi
+
+if docker_storage_is_configured; then
+  echo "DOCKER_STORAGE_OPTIONS= in $DOCKER_STORAGE is not empty. Looks like docker stroage is already configured. Cleanup existing storage configuration and run again."
+  exit 1
 fi
 
 if [ -z "$DEVS" ] && [ -z "$VG_EXISTS" ]; then
