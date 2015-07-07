@@ -335,16 +335,8 @@ else
   done
 fi
 
-if [ -z "$DEVS" ] && [ -z "$VG_EXISTS" ]; then
-  echo "Specified volume group $VG does not exists, and no devices were specified" >&2
-  exit 1
-fi
-
-if [ -n "$DEVS" ] ; then
-  create_disk_partitions
-  create_extend_volume_group
-fi
-
+# This is a misfit in this service. This should really be part of a separate
+# service.
 grow_root_pvs
 
 # NB: We are growing root here first, because when root and docker share a
@@ -354,6 +346,16 @@ grow_root_pvs
 if [ -n "$ROOT_SIZE" ]; then
   # TODO: Error checking if specified size is <= current size
   lvextend -r -L $ROOT_SIZE $ROOT_DEV || true
+fi
+
+if [ -z "$DEVS" ] && [ -z "$VG_EXISTS" ]; then
+  echo "Specified volume group $VG does not exist, and no devices were specified" >&2
+  exit 1
+fi
+
+if [ -n "$DEVS" ] ; then
+  create_disk_partitions
+  create_extend_volume_group
 fi
 
 # Set up lvm thin pool LV
