@@ -57,6 +57,8 @@ POOL_LV_NAME="docker-pool"
 DATA_LV_NAME=$POOL_LV_NAME
 META_LV_NAME="${POOL_LV_NAME}meta"
 
+OVERLAY_LV_NAME="docker-overlay-volume"
+
 DOCKER_STORAGE="/etc/sysconfig/docker-storage"
 STORAGE_DRIVERS="devicemapper overlay"
 
@@ -191,7 +193,100 @@ setup_lvm_thin_pool () {
   fi
 }
 
+overlay_volume_exists() {
+  lvs $VG/$OVERLAY_LV_NAME > /dev/null && return 0
+  return 1
+}
+
+# Check if overlay volume is already bind mounted. This return 0 if overlay
+# volume is already mounted on /var/lib/docker. Returns 1 if volumes needs
+# mounting. On all other error conditions it exits.
+
+is_overlay_mounted() {
+  local mounts target
+
+  if ! mounts=$(findmnt -n --first-only --source /dev/$VG/$OVERLAY_LV_NAME); then
+    echo "Failed to get a list of existing overlay mount points."
+    exit 1
+  fi
+
+  [ -z $mounts ] && return 1
+
+  # If overlay volume is mounted, it should be mounted on /var/lib/docker
+  # otherwise it is an error.
+  target=`echo $mounts | cut -d " " -f1`
+  [ "$target" == "$DOCKER_GRAPH_DIRECTORY" ] && return 0
+
+  echo "Overlay volume /dev/$VG/$OVERLAY_LV_NAME is mounted on $target"
+  exit 1
+}
+
+# Bind mount overlay volume on /var/lib/docker so that next docker start
+# uses overlay on volume setup by the script.
+mount_overlay_volume() {
+  if ! mount -t xfs /dev/$VG/$OVERLAY_LV_NAME $DOCKER_GRAPH_DIRECTORY > /dev/null;then
+    echo "Failed to mount overlay volume /dev/$VG/$OVERLAY_LV_NAME on ${DOCKER_GRAPH_DIRECTORY}"
+    return 1
+  fi
+
+  return 0
+}
+
+setup_overlay_volume() {
+  # Overlay volume does not exist. Create it and make fs.
+  DATA_LV_NAME=$OVERLAY_LV_NAME
+
+  if ! create_data_lv; then
+    return 1
+  fi
+
+  if ! mkfs -t xfs /dev/$VG/$OVERLAY_LV_NAME; then
+    echo "Failed to create filesystem on /dev/$VG/${OVERLAY_LV_NAME}."
+    return 1
+  fi
+
+  if ! mount_overlay_volume; then
+    return 1
+  fi
+}
+
+setup_overlay_volume_fs() {
+  [ "$OVERLAY_ON_NEW_VOLUME" != "yes" ] && return 0
+
+  # Make sure DOCKER_GRAPH_DIRECTORY is specified
+  if [ -z "$DOCKER_GRAPH_DIRECTORY" ]; then
+    echo "Specify a valid DOCKER_GRAPH_DIRECTORY"
+    return 1
+  fi
+
+  if [ ! -d "$DOCKER_GRAPH_DIRECTORY" ];then
+    echo "DOCKER_GRAPH_DIRECTORY=${DOCKER_GRAPH_DIRECTORY} is not a valid directory"
+    return 1
+  fi
+
+  is_overlay_mounted && return 0
+
+  if overlay_volume_exists; then
+     # Mount overlay and return.
+     if ! mount_overlay_volume; then
+       return 1
+     else
+       return 0
+     fi
+  fi
+
+  # Overlay volume does not exist. Create one.
+  if ! setup_overlay_volume; then
+    echo "Failed to setup logical volume for overlay"
+    return 1
+  fi
+}
+
 setup_overlay () {
+  if ! setup_overlay_volume_fs; then
+    exit 1
+  fi
+
   write_storage_config_file
 }
 
