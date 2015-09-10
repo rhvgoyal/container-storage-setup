@@ -21,7 +21,6 @@
 #  Author:   Andy Grimm <agrimm@redhat.com>
 
 set -e
-
 # This section reads the config file (/etc/sysconfig/docker-storage-setup. 
 # Currently supported options:
 # DEVS: A quoted, space-separated list of devices to be used.  This currently
@@ -56,6 +55,7 @@ set -e
 POOL_LV_NAME="docker-pool"
 DATA_LV_NAME=$POOL_LV_NAME
 META_LV_NAME="${POOL_LV_NAME}meta"
+DOCKER_ROOT_LV_NAME="docker-root-lv"
 
 DOCKER_STORAGE="/etc/sysconfig/docker-storage"
 STORAGE_DRIVERS="devicemapper overlay"
@@ -330,6 +330,101 @@ setup_lvm_thin_pool () {
   fi
 }
 
+docker_root_volume_exists() {
+  lvs $VG/$DOCKER_ROOT_LV_NAME > /dev/null 2>&1 && return 0
+  return 1
+}
+
+# Check if docker root volume is already mounted.
+# This return 0 if volume is already mounted on $DOCKER_ROOT_DIR. Returns 1
+# if volumes needs mounting. On all other error conditions it exits.
+
+docker_root_lv_mounted() {
+  local mounts target
+
+  if ! mounts=$(findmnt -n --first-only --source /dev/$VG/$DOCKER_ROOT_LV_NAME); then
+    return 1
+  fi
+
+  [ -z "$mounts" ] && return 1
+
+  # If root volume is mounted, it should be mounted on $DOCKER_ROOT_DIR
+  # otherwise it is an error.
+  target=`echo $mounts | cut -d " " -f1`
+  [ "$target" == "$DOCKER_ROOT_DIR" ] && return 0
+
+  echo "Docker root volume /dev/$VG/$DOCKER_ROOT_LV_NAME is mounted on $target instead of ${DOCKER_ROOT_DIR}. Unmount it and try again."
+  exit 1
+}
+
+# mount docker root volume on $DOCKER_ROOT_DIR so that next docker start
+# uses this volume setup by the script.
+mount_docker_root_volume() {
+  if ! mount -t xfs /dev/$VG/$DOCKER_ROOT_LV_NAME $DOCKER_ROOT_DIR > /dev/null;then
+    echo "Failed to mount docker root volume /dev/$VG/$DOCKER_ROOT_LV_NAME on ${DOCKER_ROOT_DIR}."
+    return 1
+  fi
+
+  return 0
+}
+
+setup_docker_root_volume() {
+  if [ -z "$DOCKER_ROOT_VOLUME_SIZE" ]; then
+    echo "Specify a valid value for DOCKER_ROOT_VOLUME_SIZE."
+    exit 1
+  fi
+
+  if ! check_data_size_syntax $DOCKER_ROOT_VOLUME_SIZE; then
+     echo "DOCKER_ROOT_VOLUME_SIZE value $DOCKER_ROOT_VOLUME_SIZE is invalid."
+     exit 1
+  fi
+
+  if ! create_lv $DOCKER_ROOT_VOLUME_SIZE $DOCKER_ROOT_LV_NAME; then
+    echo "Failed to create volume $DOCKER_ROOT_VOLUME_SIZE of size ${DOCKER_ROOT_VOLUME_SIZE}."
+    return 1
+  fi
+
+  if ! mkfs -t xfs /dev/$VG/$DOCKER_ROOT_LV_NAME > /dev/null; then
+    echo "Failed to create filesystem on /dev/$VG/${DOCKER_ROOT_LV_NAME}."
+    return 1
+  fi
+
+  if ! mount_docker_root_volume; then
+    return 1
+  fi
+
+  # setup right selinux label first time fs is created. Mount operation
+  # changes the label of directory to reflect the label on root inode
+  # of mounted fs.
+  if ! restore_selinux_context $DOCKER_ROOT_DIR; then
+    return 1
+  fi
+}
+
+setup_docker_root_lv_fs() {
+  [ "$DOCKER_ROOT_VOLUME" != "yes" ] && return 0
+
+  if ! check_docker_root_volume_options; then
+    return 1
+  fi
+
+  if docker_root_volume_exists; then
+    docker_root_lv_mounted && return 0
+    # Mount root volume and return.
+    if ! mount_docker_root_volume; then
+      return 1
+    else
+      return 0
+    fi
+  fi
+
+  # Docker root volume does not exist. Create one.
+  if ! setup_docker_root_volume; then
+    echo "Failed to setup logical volume for docker root."
+    return 1
+  fi
+}
+
 setup_overlay () {
   write_storage_config_file
 }
@@ -576,12 +671,74 @@ setup_storage() {
    exit 1
   fi
 
+  # If docker root is on a separate volume, setup that first.
+  if ! setup_docker_root_lv_fs; then
+    echo "Failed to setup docker root volume."
+    return 1
+  fi
+
   # Set up lvm thin pool LV
   if [ "$STORAGE_DRIVER" == "devicemapper" ]; then
     setup_lvm_thin_pool
   elif [ "$STORAGE_DRIVER" == "overlay" ];then
     setup_overlay
   fi
+}
+
+restore_selinux_context() {
+  local dir=$1
+
+  if ! restorecon -R -v $dir; then
+    echo "restorecon -R -v $dir failed."
+    return 1
+  fi
+}
+
+# Inherit the same selinux context as /var/lib/docker.
+setup_selinux_context_root_dir() {
+  local dir=$1
+  local policy
+
+  [ "$dir" == "/var/lib/docker" ] && return 0
+
+  # If there is already a labeling policy for the dir, don't try to add one.
+  policy=`semanage fcontext -l -C $dir | grep "^$dir =" | wc -l`
+  if [ $? -ne 0 ];then
+    echo "Querying existing selinux rules for $dir failed."
+    return 1
+  fi
+
+  # If no policy exists, add one.
+  if [ "$policy" == "0" ]; then
+    if ! semanage fcontext -a -e /var/lib/docker $dir; then
+      echo "semanage fcontext -a -e /var/lib/docker $dir failed."
+      return 1
+    fi
+  fi
+}
+
+check_docker_root_volume_options() {
+  # DOCKER_ROOT_VOLUME is specified then it is must to specify
+  # DOCKER_ROOT_DIR as volume will need to be mounted on a dir.
+
+  if [ -z "$DOCKER_ROOT_DIR" ]; then
+      echo "DOCKER_ROOT_DIR must be specified with option DOCKER_ROOT_VOLUME=yes."
+      return 1
+  fi
+  [ -d "$DOCKER_ROOT_DIR" ] && return 0
+
+  # Directory does not exist. Create one and setup selinux context if
+  # need be.
+  mkdir -p $DOCKER_ROOT_DIR
+  if ! setup_selinux_context_root_dir $DOCKER_ROOT_DIR; then
+    echo "Failed to setup proper selinux context ${DOCKER_ROOT_DIR}."
+    return 1
+  fi
+
+  if ! restore_selinux_context $DOCKER_ROOT_DIR; then
+    return 1
+  fi
+  return $?
 }
 
 usage() {

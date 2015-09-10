@@ -57,6 +57,19 @@ DOCKER_ROOT_DIR:
       backend is in use, containers and images will also be stored
       in this directory.
 
+DOCKER_ROOT_VOLUME:
+      If set to "yes", then a separate logical volume will be setup
+      for docker root and it will be mounted at target DOCKER_ROOT_DIR
+      and docker will use DOCKER_ROOT_DIR as root directory.
+
+      One possible use case is with overlay driver where one might not
+      want docker to store all images/containers/volumes on rootfs.
+
+DOCKER_ROOT_VOLUME_SIZE:
+      This specfies the size of docker root volume. It takes effect only
+      if DOCKER_ROOT_VOLUME=yes. It defaults to 40% of free space in
+      the volume group. It can accept same values as DATA_SIZE.
+
 AUTO_EXTEND_POOL:
       Enable automatic extension of pool by lvm. lvm can monitor
       the pool and automatically extend it when pool is getting full.
