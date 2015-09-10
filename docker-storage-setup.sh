@@ -267,8 +267,29 @@ check_min_data_size_condition() {
   fi
 }
 
-create_data_lv() {
-  if [ ! -n "$DATA_SIZE" ]; then
+# Create a logical volume of size specified by first argument. Name of the
+# volume is specified using second argument.
+create_lv() {
+  local data_size=$1
+  local data_lv_name=$2
+
+  # TODO: Error handling when data_size > available space.
+  if [[ $data_size == *%* ]]; then
+    lvcreate -y -l $data_size -n $data_lv_name $VG || return 1
+  else
+    lvcreate -y -L $data_size -n $data_lv_name $VG || return 1
+  fi
+
+  return 0
+}
+
+create_lvm_thin_pool () {
+  if [ -z "$DEVS" ] && [ -z "$VG_EXISTS" ]; then
+    echo "Specified volume group $VG does not exists, and no devices were specified" >&2
+    exit 1
+  fi
+
+  if [ -z "$DATA_SIZE" ]; then
     echo "Data volume creation failed. No DATA_SIZE specified"
     exit 1
   fi
@@ -280,23 +301,14 @@ create_data_lv() {
 
   check_min_data_size_condition
 
-  # TODO: Error handling when DATA_SIZE > available space.
-  if [[ $DATA_SIZE == *%* ]]; then
-    lvcreate -y -l $DATA_SIZE -n $DATA_LV_NAME $VG
-  else
-    lvcreate -y -L $DATA_SIZE -n $DATA_LV_NAME $VG
-  fi
-}
-
-create_lvm_thin_pool () {
-  if [ -z "$DEVS" ] && [ -z "$VG_EXISTS" ]; then
-    echo "Specified volume group $VG does not exists, and no devices were specified" >&2
-    exit 1
-  fi
-
   # First create metadata lv. Down the line let lvm2 create it automatically.
   create_metadata_lv
-  create_data_lv
+
+  # Create data lv
+  if ! create_lv $DATA_SIZE $DATA_LV_NAME; then
+    echo "Data volume creation failed with DATA_SIZE=${DATA_SIZE}."
+    exit 1
+  fi
 
   if [ -n "$CHUNK_SIZE" ]; then
     CHUNK_SIZE_ARG="-c $CHUNK_SIZE"
