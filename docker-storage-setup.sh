@@ -107,8 +107,15 @@ get_overlay_config_options() {
   echo "DOCKER_STORAGE_OPTIONS=--storage-driver overlay"
 }
 
+# Retruns additions docker options.
+get_docker_config_options() {
+  if [ -n "$DOCKER_ROOT_DIR" ]; then
+    echo "-g $DOCKER_ROOT_DIR"
+  fi
+}
+
 write_storage_config_file () {
-  local storage_options
+  local storage_options docker_options
 
   if [ "$STORAGE_DRIVER" == "devicemapper" ]; then
     if ! storage_options=$(get_devicemapper_config_options); then
@@ -119,6 +126,13 @@ write_storage_config_file () {
       return 1
     fi
   fi
+
+  # Append docker root specific options.
+  if ! docker_options=$(get_docker_config_options);then
+    return 1
+  fi
+
+  [ -n "$storage_options" ] && storage_options="$storage_options $docker_options"
 
 cat <<EOF > $DOCKER_STORAGE.tmp
 $storage_options

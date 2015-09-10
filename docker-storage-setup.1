@@ -50,6 +50,13 @@ GROWPART:
       disabled. Use GROWPART=true to enable automatic partition
       table resizing.
 
+DOCKER_ROOT_DIR:
+      Specifies the root directory for docker metadata and volumes.
+      If the devicemapper backend is in use, containers and images
+      will be stored in a dedicated LVM thin pool. If the overlay
+      backend is in use, containers and images will also be stored
+      in this directory.
+
 AUTO_EXTEND_POOL:
       Enable automatic extension of pool by lvm. lvm can monitor
       the pool and automatically extend it when pool is getting full.
