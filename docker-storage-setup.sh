@@ -403,10 +403,25 @@ grow_root_lv_fs() {
   fi
 }
 
+# Determines if a device is already added in a volume group as pv. Returns
+# 0 on success.
+is_dev_part_of_vg() {
+  local dev=$1
+  local vg=$2
+
+  if ! pv_name=$(pvs --noheadings -o pv_name -S pv_name=$dev,vg_name=$vg);then
+    echo "ERROR: Error running command pvs. Exiting."
+    exit 1
+  fi
+
+ [ -z "$pv_name" ] && return 1
+ pv_name=`echo $pv_name | tr -d '[ ]'`
+ [ "$pv_name" == "$dev" ] && return 0
+ return 1
+}
+
 scan_disk_partitions() {
   local needs_partitioned=''
-
-  local current_devices=$(pvs --noheadings -o pv_name -S vg_name=$VG |tr -d '[ ]')
 
   #validate DEVS elements
   for dev in $DEVS; do
@@ -420,7 +435,7 @@ scan_disk_partitions() {
     if [[ -z "$p" ]]; then
       needs_partitioned="$dev $need_partitioned"
     else
-      if [[ $current_devices =~ .*${basename}1.* ]]; then
+      if is_dev_part_of_vg ${dev}1 $VG; then
         echo "INFO: Device ${dev} is already partitioned and is part of volume group $VG" >&2
       else
         echo "ERROR: Device $dev is already partitioned and cannot be added to volume group $VG" >&2
