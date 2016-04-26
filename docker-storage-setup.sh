@@ -639,6 +639,10 @@ EOF
 
   # Sometimes on slow storage it takes a while for partition device to
   # become available. Wait for device node to show up.
+  Info "Calling udevadm settle after partition creation."
+  if ! udevadm settle;then
+    Fatal "udevadm settle failed. Exiting."
+  fi
   if ! wait_for_dev ${dev}1; then
     Fatal "Partition device ${dev}1 is not available"
   fi
@@ -657,7 +661,7 @@ create_disk_partitions() {
     # signatures on disk or signatures have been overridden. Don't care
     # about any signatures found in the middle of disk after creating
     # partition and use force option.
-    pvcreate -f ${dev}1
+    pvcreate -f -vvvv ${dev}1
     PVS="$PVS ${dev}1"
   done
 }
