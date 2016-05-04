@@ -1,6 +1,7 @@
 docker-storage-setup
 ====================
 
+
 A crucial aspect to Docker is the concept of the copy-on-write layered
 filesystems.  There is a significant amount of documentation on this upstream:
 
