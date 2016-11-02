@@ -57,6 +57,7 @@ install -p -m 755 %{SOURCE5} %{buildroot}/%{dsslibdir}/dss-child-read-write
 %{dsslibdir}/docker-storage-setup
 %config(noreplace) %{_sysconfdir}/sysconfig/docker-storage-setup
 %{dsslibdir}/libdss.sh
+%{dsslibdir}/dss-child-read-write
 
 %changelog
 * Thu Oct 16 2014 Andy Grimm <agrimm@redhat.com> - 0.0.1-2
