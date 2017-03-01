@@ -21,40 +21,45 @@
 
 set -e
 
-# container-storage-setup version information
-CSS_MAJOR_VERSION="0"
-CSS_MINOR_VERSION="1"
-CSS_SUBLEVEL="0"
-CSS_EXTRA_VERSION=""
+set_overridable_globals() {
+  DOCKER_ROOT_VOLUME_SIZE=40%FREE
+}
 
-CSS_VERSION="${CSS_MAJOR_VERSION}.${CSS_MINOR_VERSION}.${CSS_SUBLEVEL}"
-[ -n "$CSS_EXTRA_VERSION" ] && CSS_VERSION="${CSS_VERSION}-${CSS_EXTRA_VERSION}"
+set_internal_globals() {
+  # container-storage-setup version information
+  CSS_MAJOR_VERSION="0"
+  CSS_MINOR_VERSION="1"
+  CSS_SUBLEVEL="0"
+  CSS_EXTRA_VERSION=""
 
-# This section reads the config file $INPUTFILE
-# Read man page for a description of currently supported options:
-# 'man container-storage-setup'
+  CSS_VERSION="${CSS_MAJOR_VERSION}.${CSS_MINOR_VERSION}.${CSS_SUBLEVEL}"
+  [ -n "$CSS_EXTRA_VERSION" ] && CSS_VERSION="${CSS_VERSION}-${CSS_EXTRA_VERSION}"
 
-DOCKER_ROOT_LV_NAME="docker-root-lv"
-DOCKER_ROOT_DIR="/var/lib/docker"
-DOCKER_METADATA_DIR="/var/lib/docker"
-DOCKER_ROOT_VOLUME_SIZE=40%FREE
+  # This section reads the config file $INPUTFILE
+  # Read man page for a description of currently supported options:
+  # 'man container-storage-setup'
 
-STORAGE_IN_FILE="/etc/sysconfig/docker-storage-setup"
-STORAGE_OUT_FILE="/etc/sysconfig/docker-storage"
-STORAGE_DRIVERS="devicemapper overlay overlay2"
+  DOCKER_ROOT_LV_NAME="docker-root-lv"
+  DOCKER_ROOT_DIR="/var/lib/docker"
+  DOCKER_METADATA_DIR="/var/lib/docker"
 
-PIPE1=/run/css-$$-fifo1
-PIPE2=/run/css-$$-fifo2
-TEMPDIR=$(mktemp --tmpdir -d)
+  STORAGE_IN_FILE="/etc/sysconfig/docker-storage-setup"
+  STORAGE_OUT_FILE="/etc/sysconfig/docker-storage"
+  STORAGE_DRIVERS="devicemapper overlay overlay2"
 
-# DEVS can have device names without absolute path. Convert these to absolute
-# paths and save in ABS_DEVS and use in rest of the code.
-DEVS_ABS=""
+  PIPE1=/run/css-$$-fifo1
+  PIPE2=/run/css-$$-fifo2
+  TEMPDIR=$(mktemp --tmpdir -d)
 
-# Will have currently configured storage options in ${STORAGE_OUT_FILE}
-CURRENT_STORAGE_OPTIONS=""
+  # DEVS can have device names without absolute path. Convert these to absolute
+  # paths and save in ABS_DEVS and use in rest of the code.
+  DEVS_ABS=""
 
-STORAGE_OPTIONS="STORAGE_OPTIONS"
+  # Will have currently configured storage options in ${STORAGE_OUT_FILE}
+  CURRENT_STORAGE_OPTIONS=""
+
+  STORAGE_OPTIONS="STORAGE_OPTIONS"
+}
 
 get_docker_version() {
   local version
@@ -1199,7 +1204,40 @@ elif [ -e /usr/share/container-storage-setup/container-storage-setup ]; then
 fi
 
 # Main Script
+
+# These variables are overridable by sourcing
+# container-storage-setup conf file.
+set_overridable_globals
+
+# Parse command line to see which config file to source.
+ORIG_OPTS="$@"
 OPTS=`getopt -o hv -l reset -l help -l version -- "$@"`
+eval set -- "$OPTS"
+while true ; do
+    case "$1" in
+        --reset) shift;;
+        -h | --help)  shift;;
+        -v | --version)  shift;;
+        --) shift; break;;
+    esac
+done
+
+# User has specified inputfile and outputfile and we need to source
+# that file.
+if [ $# -eq 2 ]; then
+  [ -e "$1" ] && source "$1"
+else
+  if [ -e "/etc/sysconfig/docker-storage-setup" ]; then
+    source /etc/sysconfig/docker-storage-setup
+  fi
+fi
+
+# These are the globals which are not overridable by sourcing
+# container-storage-setup file.
+set_internal_globals
+
+# Now parse command line again for rest of the options.
+OPTS=`getopt -o hv -l reset -l help -l version -- ${ORIG_OPTS}`
 eval set -- "$OPTS"
 RESET=0
 while true ; do
@@ -1227,12 +1265,6 @@ esac
 
 if [ "${STORAGE_OUT_FILE}" = "/etc/sysconfig/docker-storage" ]; then
    STORAGE_OPTIONS="DOCKER_STORAGE_OPTIONS"
-fi
-
-# If user has overridden any settings in $STORAGE_IN_FILE
-# take that into account.
-if [ -e ${STORAGE_IN_FILE} ]; then
-  source ${STORAGE_IN_FILE}
 fi
 
 # Populate $RESOLVED_MOUNT_DIR_PATH
