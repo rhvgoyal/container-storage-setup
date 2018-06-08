@@ -779,13 +779,29 @@ is_block_dev_partition() {
   fi
 
   # For loop device partitions, lsblk reports type as "loop" and not "part".
-  # So check if device has a parent in the tree and if it does, there are high
-  # chances it is partition (except the case of lvm volumes)
-  if ! devparent=$(lsblk -npls -o NAME ${bdev}|tail -n +2); then
+  # Similarly for dm multipath devices, lsblk reports type as "dm" or
+  # "mpath" and not "part".
+  #
+  # For such cases find parent of device in question. If parent does not
+  # exist, device is not partition. If parent does exist and if parent
+  # name is substring of device name, then device is partition (most likely).
+  #
+  # Stacked devices will have parents but these are not necessarily
+  # partitions. So checking for parent name being substring of device
+  # in question, should take care of that case.
+
+  if ! devparent=$(lsblk -npls -o NAME ${bdev}|tail -n +2 | head -n 1); then
     Fatal "Failed to run lsblk on device $bdev"
   fi
 
-  if [ -n "$devparent" ];then
+  # There is no parent. Device can't be partition.
+  if [ -z "$devparent" ];then
+    return 1
+  fi
+
+  # Device parent name is substring of device name. Most likely device
+  # is a partition.
+  if [[ $bdev = *$devparent* ]];then
     return 0
   fi
 
