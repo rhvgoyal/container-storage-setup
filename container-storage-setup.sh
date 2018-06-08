@@ -816,6 +816,12 @@ check_wipe_block_dev_sig() {
   done <<< "$sig"
 }
 
+# If a device has /dev/mapper/ prefix, then it is a device mapper device.
+is_dm_device() {
+  [[ "$1" = /dev/mapper/* ]] && return 0
+  return 1
+}
+
 # This is used in compatibility mode
 canonicalize_block_devs_compat() {
   local devs=$1 dev
@@ -823,8 +829,14 @@ canonicalize_block_devs_compat() {
   local dest_dev
 
   for dev in ${devs}; do
-    # If the device name is a symlink, follow it and use the target
-    if [ -h "$dev" ];then
+    # If the device name is a symlink, follow it and use the target. Do
+    # not follow device symlinks present in /dev/mapper/ directory.
+    # They are supposed to be persistent and do not change. Also we
+    # rely on these names in is_block_dev_partition() to figure out
+    # if a dm device is a partition or not. Even tools like lsblk seem
+    # to be reporting device names in /dev/mapper/ and not /dev/dm-*.
+    # So provide an exception for /dev/mapper/* devices.
+    if ! is_dm_device $dev && [ -h "$dev" ];then
       if ! dest_dev=$(readlink -e $dev);then
         Fatal "Failed to resolve symbolic link $dev"
       fi
